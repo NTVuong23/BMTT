@@ -40,6 +40,7 @@ public class SimpleDDoS {
 
             System.out.println("\n");
             System.out.println("If you have any questions or suggestions, don't hesitate to share. Keep learning, keep growing.");
+            System.out.println("Source Code: https://github.com/NTVuong23/BMTT/tree/BMTT");
             System.out.println("\n");
 
             System.out.println("===== Main Menu =====");
